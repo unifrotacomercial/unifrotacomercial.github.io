@@ -235,6 +235,7 @@ const validLogin=l=>/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(l)&&l.length<=120;
 let authUser=null, perfil=null, perfilLoaded=false, unsubs=[];
 function logout(){fbAuth.signOut()}
 // precisa de login enquanto não houver usuário confirmado, aprovado e ativo
+const podeReservar=()=>canEditCfg||!!(perfil&&perfil.comercial===true);
 const needLogin=()=>!(authUser&&authUser.emailVerified&&perfil&&perfil.status==="ativo");
 
 
@@ -315,7 +316,7 @@ function renderStatus(){
     h+=`<span class="pill ok">● Disponível</span><div class="big">Carro na base</div>
       <div class="muted">Hodômetro: ${fmtKm(lastKm())}</div>
       ${cur?`<div class="note" style="margin:10px 0 0">Reservado agora para <b>${esc(cur.nome)}</b> até ${hm(new Date(cur.fim))}.</div>`:""}
-      <div class="btns"><button class="btn" id="goSai">Pegar o carro</button><button class="btn sec" id="goRes">Reservar dia e hora</button></div>`;
+      <div class="btns"><button class="btn" id="goSai">Pegar o carro</button>${podeReservar()?'<button class="btn sec" id="goRes">Reservar dia e hora</button>':'<button class="btn sec" id="goRes">Ver agenda</button>'}</div>`;
   }
   h+='</div>';
   const next=fut.slice(0,3);
@@ -343,7 +344,7 @@ function newAgendaForm(){
 function renderAgenda(){
   if(!agendaForm)newAgendaForm();
   const a=agendaForm;
-  let h=`<div class="card"><div style="font-weight:700;font-size:17px;margin-bottom:12px">Reservar o carro</div>
+  let h=!podeReservar()?`<div class="note">Somente o <b>time comercial</b> pode reservar o carro. Se você precisa usar, fale com o administrador.</div>`:`<div class="card"><div style="font-weight:700;font-size:17px;margin-bottom:12px">Reservar o carro</div>
     ${a.err?`<div class="err">${esc(a.err)}</div>`:""}
     <label class="f">Seu nome</label><input type="text" id="aNome" value="${esc(a.nome)}" placeholder="Nome" ${sess&&!canEditCfg?"readonly":""}>
     <div class="seg" style="margin-top:14px"><button type="button" data-multi="0" class="${!a.multi?"on":""}">Um dia</button><button type="button" data-multi="1" class="${a.multi?"on":""}">Mais de um dia</button></div>
@@ -367,6 +368,7 @@ function renderAgenda(){
 }
 async function saveReserva(){
   const a=agendaForm;a.err="";
+  if(!podeReservar()){a.err="Somente o time comercial pode reservar.";render();return}
   const nome=a.nome.trim();
   const dFim=a.multi?a.dataFim:a.data;
   const ini=new Date(a.data+"T"+a.ini),fim=new Date(dFim+"T"+a.fim);
@@ -614,7 +616,7 @@ function renderAuth(){
 }
 async function criarPerfil(nome,tel){
   await fs.collection("mobi_usuarios").doc(authUser.uid).set({nome,telefone:tel,email:authUser.email.toLowerCase(),
-    status:isDono()?"ativo":"pendente",admin:isDono(),criadoEm:new Date().toISOString()});
+    status:isDono()?"ativo":"pendente",admin:isDono(),comercial:isDono(),criadoEm:new Date().toISOString()});
 }
 const isDono=()=>!!authUser&&DONOS.includes(String(authUser.email).toLowerCase());
 function bindAuth(){
@@ -693,7 +695,7 @@ function renderUsers(){
     h+=`<div class="sectitle">Aguardando aprovação (${pend.length})</div><div class="card">`;
     for(const p of pend)h+=`<div class="urow"><div style="font-weight:700">${esc(p.nome)}</div>
       <div class="muted">${esc(p.email)}${p.telefone?" · "+esc(p.telefone):""} · ${fmtDate(p.criadoEm)}</div>
-      <div class="flex" style="margin-top:8px"><button class="btn small" data-aprovar="${esc(p.id)}">Aprovar</button><button class="btn small sec" data-recusar="${esc(p.id)}">Recusar</button></div></div>`;
+      <div class="flex" style="margin-top:8px;flex-wrap:wrap"><button class="btn small" data-aprovar="${esc(p.id)}" data-com="1">Aprovar como Comercial</button><button class="btn small sec" data-aprovar="${esc(p.id)}" data-com="0">Aprovar (sem agendar)</button><button class="btn small sec" data-recusar="${esc(p.id)}">Recusar</button></div></div>`;
     h+='</div>';
   }
   h+=`<div class="sectitle">Usuários (${outros.length})</div>`;
@@ -704,6 +706,7 @@ function renderUsers(){
       <label class="f">Telefone</label><input type="text" id="nTel" value="${esc(n.tel)}">
       <label class="f">E-mail</label><input type="email" id="nLogin" value="${esc(n.login)}" autocapitalize="none">
       <label class="f">Senha inicial (mín. 6)</label><input type="text" id="nPass" value="${esc(n.senha)}">
+      <label class="flex" style="margin-top:14px;font-weight:600;font-size:14px;cursor:pointer"><input type="checkbox" id="nCom" ${n.com?"checked":""} style="width:20px;height:20px"> Time comercial (pode reservar o carro)</label>
       <div class="muted" style="margin-top:6px">A pessoa entra com esse e-mail e senha. Ela também recebe um link para confirmar o e-mail.</div>
       <div class="flex" style="margin-top:12px"><button class="btn small" id="nSave" ${n.busy?"disabled":""}>${n.busy?"Criando…":"Criar"}</button><button class="btn small sec" id="nCancel">Cancelar</button></div></div>`;
   }else h+=`<button class="btn sec" id="nOpen" style="margin-bottom:12px">+ Cadastrar usuário</button>`;
@@ -712,9 +715,10 @@ function renderUsers(){
     for(const u of [...outros].sort((a,b)=>String(a.nome).localeCompare(String(b.nome)))){
       const eu=u.id===myId;
       h+=`<div class="urow"><div class="top"><div><div style="font-weight:700">${esc(u.nome)}${eu?" (você)":""}</div><div class="muted">${esc(u.email)}${u.telefone?" · "+esc(u.telefone):""}</div></div>
-        <div>${u.admin?'<span class="tag blue">Adm</span> ':""}${u.status==="ativo"?'<span class="tag ok">Ativo</span>':'<span class="tag bad">Bloqueado</span>'}</div></div>
+        <div>${u.admin?'<span class="tag blue">Adm</span> ':""}${u.comercial?'<span class="tag blue">Comercial</span> ':""}${u.status==="ativo"?'<span class="tag ok">Ativo</span>':'<span class="tag bad">Bloqueado</span>'}</div></div>
         ${eu?"":`<div class="flex" style="margin-top:8px;flex-wrap:wrap">
         <button class="btn small sec" data-toggle="${esc(u.id)}">${u.status==="ativo"?"Bloquear":"Desbloquear"}</button>
+        <button class="btn small sec" data-comtog="${esc(u.id)}">${u.comercial?"Tirar do Comercial":"Colocar no Comercial"}</button>
         <button class="btn small sec" data-adm="${esc(u.id)}">${u.admin?"Tirar admin":"Tornar admin"}</button>
         <button class="btn small sec" data-reset="${esc(u.id)}">Enviar troca de senha</button></div>`}</div>`;
     }
@@ -724,7 +728,8 @@ function renderUsers(){
 }
 function bindUsers(){
   const upd=async(id,data,msg,b)=>{if(b)b.disabled=true;try{await fs.collection("mobi_usuarios").doc(id).update(data);msg&&toast(msg)}catch(e){if(b)b.disabled=false;toast(fbErr(e))}};
-  document.querySelectorAll("[data-aprovar]").forEach(b=>b.onclick=()=>upd(b.dataset.aprovar,{status:"ativo"},"Acesso liberado",b));
+  document.querySelectorAll("[data-aprovar]").forEach(b=>b.onclick=()=>upd(b.dataset.aprovar,{status:"ativo",comercial:b.dataset.com==="1"},b.dataset.com==="1"?"Liberado no time comercial":"Acesso liberado",b));
+  document.querySelectorAll("[data-comtog]").forEach(b=>b.onclick=()=>{const u=usuarios.find(x=>x.id===b.dataset.comtog);upd(u.id,{comercial:!u.comercial},u.comercial?"Saiu do time comercial":"Agora pode reservar (Comercial)",b)});
   document.querySelectorAll("[data-recusar]").forEach(b=>b.onclick=()=>{
     if(b.dataset.armed!=="1"){b.dataset.armed="1";b.textContent="Confirmar recusa?";return}
     upd(b.dataset.recusar,{status:"bloqueado"},"Pedido recusado",b)});
@@ -736,7 +741,7 @@ function bindUsers(){
   if(novoUser&&$("#nSave")){
     const n=novoUser;
     $("#nNome").oninput=e=>n.nome=e.target.value;$("#nTel").oninput=e=>n.tel=e.target.value;
-    $("#nLogin").oninput=e=>n.login=e.target.value;$("#nPass").oninput=e=>n.senha=e.target.value;
+    $("#nLogin").oninput=e=>n.login=e.target.value;$("#nPass").oninput=e=>n.senha=e.target.value;$("#nCom").onchange=e=>n.com=e.target.checked;
     $("#nCancel").onclick=()=>{novoUser=null;render()};
     $("#nSave").onclick=async()=>{
       n.err="";const l=normLogin(n.login);
@@ -752,9 +757,9 @@ function bindUsers(){
         const sa=sec.auth();
         const cred=await sa.createUserWithEmailAndPassword(l,n.senha);
         try{await cred.user.sendEmailVerification()}catch(e){}
-        await sec.firestore().collection("mobi_usuarios").doc(cred.user.uid).set({nome:n.nome.trim(),telefone:n.tel.trim(),email:l,status:"pendente",admin:false,criadoEm:new Date().toISOString()});
+        await sec.firestore().collection("mobi_usuarios").doc(cred.user.uid).set({nome:n.nome.trim(),telefone:n.tel.trim(),email:l,status:"pendente",admin:false,comercial:false,criadoEm:new Date().toISOString()});
         await sa.signOut();
-        await fs.collection("mobi_usuarios").doc(cred.user.uid).update({status:"ativo"});
+        await fs.collection("mobi_usuarios").doc(cred.user.uid).update({status:"ativo",comercial:!!n.com});
         toast("Usuário criado: "+l);novoUser=null;
       }catch(e){n.err=fbErr(e)}
       n.busy=false;render();
@@ -769,7 +774,7 @@ function bindView(){
   $("#goRet")&&($("#goRet").onclick=()=>newForm("retorno"));
   $("#goRes")&&($("#goRes").onclick=()=>setTab("agenda"));
   $("#goProb")&&($("#goProb").onclick=()=>setTab("prob"));
-  if(tab==="agenda"&&agendaForm){
+  if(tab==="agenda"&&agendaForm&&$("#aSave")){
     const a=agendaForm;
     $("#aNome").oninput=e=>a.nome=e.target.value;
     $("#aData").oninput=e=>{a.data=e.target.value;if(!a.multi||a.dataFim<a.data){a.dataFim=a.data;$("#aDataFim")&&($("#aDataFim").value=a.data)}};
